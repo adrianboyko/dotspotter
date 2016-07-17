@@ -25,12 +25,11 @@
 #include <stdio.h>
 
 typedef struct {
-	FILE* file;
-	FILE* dblog;
-	uint32_t* rowSums;       // Row sum accumulators
-	uint32_t* colSums;       // Col sum accumulators
-	uint16_t width;          // Width of image, in pixels
-	uint16_t height;         // Height of image, in pixels
+	FILE* file;         // File where sums are written
+	uint32_t* rowSums;  // Row sum accumulators
+	uint32_t* colSums;  // Col sum accumulators
+	uint16_t width;     // Width of image, in pixels
+	uint16_t height;    // Height of image, in pixels
 } modulestate;
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -38,7 +37,7 @@ typedef struct {
 static PyObject* imgsum_start(PyObject* self, PyObject* args) {
 	modulestate* ms = PyModule_GetState(self);
 	
-	char* filename;
+	char* filename = NULL;
 	PyObject* wantRowSumsObj = NULL;
 	PyObject* wantColSumsObj = NULL;
 	
@@ -48,10 +47,22 @@ static PyObject* imgsum_start(PyObject* self, PyObject* args) {
 		return NULL;
 	}
 	
+	if (ms->width % 32 != 0) {
+		// This module's code currently only works with images that have
+		// widths that are a multiple of 32. Other widths have padding
+		// in the YUV420 format but code doesn't yet deal with padding.
+		PyErr_SetString(PyExc_ValueError, "Width of images must be a multiple of 32.");
+		return NULL;
+	}
+	
 	int wantRowSums = PyObject_IsTrue(wantRowSumsObj);
 	int wantColSums = PyObject_IsTrue(wantColSumsObj);
 	
 	ms->file = fopen(filename, "wb");
+	if (ms->file == NULL) {
+		PyErr_SetString(PyExc_EnvironmentError, "Couldn't open output file.");
+		return NULL;
+	}
 		
 	size_t rowSumsByteCount = ms->height * sizeof(*ms->rowSums);
 	size_t colSumsByteCount = ms->width * sizeof(*ms->colSums);
@@ -85,7 +96,6 @@ static PyObject* imgsum_sum(PyObject* self, PyObject* args) {
 	if (!PyArg_ParseTuple(args,"s#", &yuv420, &yuv420Len)) {
 		return NULL;
 	}
-	// TODO: Could assert expected yuv420Len value, which is a func of width, height, and padding.
 		
 	// Calculate the row sums for the given image:
 	char* val = yuv420;
