@@ -22,42 +22,62 @@
  */
 
 #include <Python.h>
+#include <stdio.h>
 
-static FILE* file = NULL;
-
-static uint32_t* rowSums = NULL; // Row sum accumulators.
-static size_t rowSumsByteCount = 0; // Size of rowSums buffer, in bytes.
-
-static uint16_t width = 0; // Width of image, in pixels.
-static uint16_t height = 0; // Height of image, in pixels.
+typedef struct {
+	FILE* file;
+	FILE* dblog;
+	uint32_t* rowSums;       // Row sum accumulators
+	uint32_t* colSums;       // Col sum accumulators
+	uint16_t width;          // Width of image, in pixels
+	uint16_t height;         // Height of image, in pixels
+} modulestate;
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 static PyObject* imgsum_start(PyObject* self, PyObject* args) {
-
+	modulestate* ms = PyModule_GetState(self);
+	
 	char* filename;
-	if (!PyArg_ParseTuple(args,"iis", &width, &height, &filename)) {
+	PyObject* wantRowSumsObj = NULL;
+	PyObject* wantColSumsObj = NULL;
+	
+	// TODO: Make range ends/begins default
+	if (!PyArg_ParseTuple(args, "iisOO", 
+	  &ms->width, &ms->height, &filename, &wantRowSumsObj, &wantColSumsObj)) {
 		return NULL;
 	}
-
-	file = fopen(filename,"ab");	
-	rowSumsByteCount = height * sizeof(*rowSums);	 
-	rowSums = malloc(rowSumsByteCount);
-	memset(rowSums, 0, rowSumsByteCount); 
+	
+	int wantRowSums = PyObject_IsTrue(wantRowSumsObj);
+	int wantColSums = PyObject_IsTrue(wantColSumsObj);
+	
+	ms->file = fopen(filename, "wb");
+		
+	size_t rowSumsByteCount = ms->height * sizeof(*ms->rowSums);
+	size_t colSumsByteCount = ms->width * sizeof(*ms->colSums);
+	ms->rowSums = wantRowSums ? malloc(rowSumsByteCount) : NULL;
+	ms->colSums = wantColSums ? malloc(colSumsByteCount) : NULL;
+		
 	Py_RETURN_NONE;
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 static PyObject* imgsum_stop(PyObject* self, PyObject* args) {
-	free(rowSums);
-	fclose(file);
+	modulestate* ms = PyModule_GetState(self);
+	
+	if (ms->rowSums) free(ms->rowSums);
+	if (ms->colSums) free(ms->colSums);
+	fclose(ms->file);
 	Py_RETURN_NONE;
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 static PyObject* imgsum_sum(PyObject* self, PyObject* args) {
+	modulestate* ms = PyModule_GetState(self);
+	size_t rowSumsByteCount = ms->height * sizeof(*ms->rowSums);		
+	size_t colSumsByteCount = ms->width * sizeof(*ms->colSums);
 
 	// Parse arguments:
 	char* yuv420; // The Image in YUV420 format.
@@ -65,26 +85,26 @@ static PyObject* imgsum_sum(PyObject* self, PyObject* args) {
 	if (!PyArg_ParseTuple(args,"s#", &yuv420, &yuv420Len)) {
 		return NULL;
 	}
+	// TODO: Could assert expected yuv420Len value, which is a func of width, height, and padding.
 		
 	// Calculate the row sums for the given image:
 	char* val = yuv420;
 	uint16_t currRow = 0;
 	uint16_t currCol = 0;
-	memset(rowSums, 0, rowSumsByteCount);
-	while (1) {
-		rowSums[currRow] += *val;
+	if (ms->rowSums) memset(ms->rowSums, 0, rowSumsByteCount);
+	if (ms->colSums) memset(ms->colSums, 0, colSumsByteCount);
+	while (currRow < ms->height) {
+		if (ms->rowSums) ms->rowSums[currRow] += *val;
+		if (ms->colSums) ms->colSums[currCol] += *val;
 		val += 1;
 		currCol += 1;
-        if (currCol == width) {
-			// Consider enhancement: Skip val ptr over padding for case when width is not multiple of 32.
+        if (currCol == ms->width) {
             currRow += 1;
             currCol = 0;
         }
-        if (currRow == height) break;
     }
-
-	fwrite(rowSums, rowSumsByteCount, 1, file);
-	
+	if (ms->rowSums) fwrite(ms->rowSums, rowSumsByteCount, 1, ms->file);
+	if (ms->colSums) fwrite(ms->colSums, colSumsByteCount, 1, ms->file);
 	Py_RETURN_NONE;
 }
 
@@ -105,8 +125,8 @@ PyMODINIT_FUNC PyInit_imgsum(void) {
 	static struct PyModuleDef moduledef = {
 		PyModuleDef_HEAD_INIT,
 		"imgsum",
-		"Sums rows of a series of YUV420 images and writes sums to a file.",
-		-1,
+		"Calculates ro and/or col sums for each img in a series and writes sums to a file.",
+		sizeof(modulestate),
 		imgsum_methods,
 		NULL,NULL,NULL,NULL
 	};
