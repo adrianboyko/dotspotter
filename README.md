@@ -7,22 +7,92 @@ dark background. Since high time resolution was desired, it was important to pro
 Therefor, this code was written to process raw YUV420 images as they came from the camera with resulting row/col sums
 being written to a file for later processing by other software.
 
-## Usage
-Sums for a number of images are calculated and stored in a single output file. Begin the batch with `start`, process each image in the batch with `sum`, and end the batch with `stop`.
+## Usage Examples
+
+### Calculate Sums
+Calculate column sums for a number of images and store the sums in an output file. 
+
+Recipe:
+
+1. Begin the batch with `begin_batch`
+2. Specify an output file with `save_sums_to`
+3. Process each image in the batch with `process_img`
+4. End the batch with `end_batch`
+
+Python:
 ```python
 import imgsum
 
-# Start by spec'ing width/height of imgs, output file name, and whether row and/or col sums are desired.
-imgsum.start(imgwidth, imageheight, "RecordedData.bin", False, True)
+imgsum.begin_batch(imgwidth, imageheight, False, True) # Want col sums but no row sums.
+imgsum.save_sums_to("RecordedData.bin")
 
-# Process a number of images.
-while more_images():
-    img = get_image()
-    imgsum.sum(img)
+for img in images():
+    imgsum.process_img(img)
 
-# Clean up when done.
-imgsum.stop()
+imgsum.end_batch()
 ```
+
+### Calculate Sums and Grand Totals
+
+Same as the previous example, but also calculates grand totals for the sums.
+
+Recipe:
+
+1. Begin the batch with `begin_batch`
+2. Enable grand totals with `grand totals`
+3. Specify an output file with `save_sums_to`
+4. Process each image in the batch with `process_img`
+5. End the batch with `end_batch`
+
+Python:
+```python
+import imgsum
+
+imgsum.begin_batch(imgwidth, imageheight, False, True)
+imgsum.grand_totals(True)
+imgsum.save_sums_to("RecordedData.bin")
+
+for img in images():
+    imgsum.process_img(img)
+
+imgsum.end_batch()
+```
+
+### Determine and Ignore Constant Background
+
+Consider a case where the position of a laser dot in some static scene is to be determined. The grand total for a number 
+of scene imgages with the laser off provides enough information for imgsum to automatically subtract the background from subsequent scene images with the laser on.
+
+Recipe:
+
+1. Begin the batch with `begin_batch`
+2. Enable grand totals with `grand totals`
+3. Process a number of background images with `process_img`
+4. Request that the accumulated grand total be transformed into background info with `set_bg`
+5. Disable further grand totaling with `grand totals`
+6. Specify an output file with `save_sums_to`
+7. Process a number of images that include the laser dot with `process_img`
+8. End the batch with `end_batch`
+
+```python
+import imgsum
+
+imgsum.begin_batch(imgwidth, imageheight, False, True)
+imgsum.grand_totals(True)
+
+for img in background_images():
+    imgsum.process_img(img)
+
+imgsum.set_bg()
+imgsum.grand_totals(False)
+imgsum.save_sums_to("RecordedData.bin")
+
+for img in laser_images():
+    imgsum.process_img(img)
+
+imgsum.end_batch()
+```
+
 ## Output File Format
 Binary file containing a sequence of 32 bit integers. If the images processed have height H and row summing is selected
 but col summing is not, then the first H integers in the output file represent the row sums for the first image, the next
